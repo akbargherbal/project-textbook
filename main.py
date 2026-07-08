@@ -1,4 +1,3 @@
-
 """
 main.py
 
@@ -140,7 +139,7 @@ def parse_markdown_mapping(content: str) -> dict:
 
     # Normalize: convert backslashes to forward slashes and strip leading/trailing slashes
     if raw_source:
-        raw_source = raw_source.replace("\\", "/").strip().lstrip("/")
+        raw_source = raw_source.replace("\\\\", "/").strip().lstrip("/")
     entry["doc_source"] = raw_source
 
     # Extract Doc source tier

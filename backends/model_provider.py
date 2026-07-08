@@ -23,13 +23,26 @@ passed through) stays identical for callers.
 
 Requires: pip install langchain-nvidia-ai-endpoints
 Env vars:
-    NVIDIA_API_KEY   -- required, your NVIDIA API Catalog key (starts "nvapi-")
-    NVIDIA_MODEL     -- optional, overrides the default model id below
+    NVIDIA_API_KEY        -- required, your NVIDIA API Catalog key (starts "nvapi-")
+    NVIDIA_MODEL          -- optional, overrides the default model id below
+    MODEL_TIMEOUT_SECONDS -- optional, overrides the 5-minute default timeout
+                             applied to every provider below
+
+Timeout
+-------
+Every provider gets a 300s (5 min) request timeout by default. 60s (the
+langchain-nvidia-ai-endpoints default, and often the underlying SDK default
+for other providers too) is too short for reasoning models or long
+tool-calling agent turns -- it's a client-side default, not a real ceiling
+imposed by any of these APIs, so raising it here is safe. Override globally
+with MODEL_TIMEOUT_SECONDS, or per-call with get_model(timeout=...).
 """
 
 import os
 
 from langchain.chat_models import init_chat_model
+
+DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MODEL_TIMEOUT_SECONDS", "300"))
 
 # provider_key -> (init_chat_model model string, required env var for the key)
 MODEL_MAP = {
@@ -83,14 +96,33 @@ def get_model(provider: str | None = None, **overrides):
             "temperature": 1,
             "top_p": 1,
             "max_completion_tokens": 64000,
-            # "seed": 42,
+            "seed": 42,
         }
         nvidia_defaults.update(overrides)
 
-        return ChatNVIDIA(
+        llm = ChatNVIDIA(
             model=model_id,
             api_key=os.environ[required_env],
             **nvidia_defaults,
         )
 
+        # ChatNVIDIA's public constructor has no `timeout=` kwarg -- anything
+        # passed in gets silently absorbed into model_kwargs (and sent as a
+        # bogus request field) instead of configuring the HTTP client. The
+        # underlying client defaults to a 60s read timeout, which a
+        # reasoning model asked for max_completion_tokens=64000 can easily
+        # exceed mid-generation (this is what caused the ReadTimeout crash
+        # during a deepagents subagent call). Set it directly on the
+        # (mutable) private client attributes instead.
+        timeout_seconds = overrides.get("timeout", DEFAULT_TIMEOUT_SECONDS)
+        llm._client.timeout = timeout_seconds
+        llm._async_client.timeout = timeout_seconds
+
+        return llm
+
+    # For every other provider, init_chat_model's `timeout` kwarg is passed
+    # straight through to the underlying SDK client (OpenAI/Anthropic/
+    # DeepSeek all honor it directly, unlike ChatNVIDIA above). Apply the
+    # same 5-minute default here so no provider is left on a 60s default.
+    overrides.setdefault("timeout", DEFAULT_TIMEOUT_SECONDS)
     return init_chat_model(model_string, **overrides)
