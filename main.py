@@ -1,3 +1,4 @@
+
 """
 main.py
 
@@ -303,7 +304,7 @@ def run(project_slug: str, task_description: str):
     # Fallback/Supplemental: Scan final Assistant message if nothing was saved on disk
     ai_messages = [
         m
-        for m in messages
+        for m in result["messages"]
         if getattr(m, "role", None) == "assistant"
         or type(m).__name__ == "AIMessage"
         or (isinstance(m, dict) and m.get("role") == "assistant")

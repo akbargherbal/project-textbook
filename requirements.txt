@@ -7,6 +7,7 @@ langgraph>=0.2.0
 langchain-deepseek
 langchain-anthropic
 langchain-openai
+langchain-nvidia-ai-endpoints
 
 # Config / gates
 PyYAML>=6.0
