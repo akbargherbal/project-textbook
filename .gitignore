@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+projects/*/target_repo/*
+projects/*/framework_docs/*
+!projects/*/target_repo/.gitkeep
+!projects/*/framework_docs/.gitkeep

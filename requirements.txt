@@ -1,0 +1,16 @@
+# Core
+deepagents>=0.1.0
+langchain>=0.3.0
+langgraph>=0.2.0
+
+# Model providers (install only what you use; kept together for the PoC)
+langchain-deepseek
+langchain-anthropic
+langchain-openai
+
+# Config / gates
+PyYAML>=6.0
+
+# NOTE: pin exact versions once you've confirmed compatibility against
+# docs.langchain.com/oss/python/deepagents — package names/versions for
+# this framework are moving fast as of this scaffold's creation.

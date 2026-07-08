@@ -1,0 +1,25 @@
+project_name: django-example
+framework_name: Django
+
+target_repo:
+  source: local     # you drop the project you're studying into
+                    # projects/django-example/target_repo/ yourself
+  git_url: null
+  ref: null
+
+framework_docs:
+  # Django's docs live inside the main django/django repo, not a
+  # separate docs repo -- hence subpath.
+  source: git
+  git_url: https://github.com/django/django.git
+  ref: stable/5.1.x    # PIN THIS to match whatever Django version
+                        # target_repo actually depends on
+  subpath: docs/
+
+fallback:
+  enabled: true
+  allowed_domains:
+    - docs.djangoproject.com   # rendered docs site, used only as fallback
+                                # when a concept isn't in the local clone
+
+external_reference_policy: flag

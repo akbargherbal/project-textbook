@@ -1,0 +1,43 @@
+# config/project.template.yaml
+#
+# Copy this to projects/<your-project-slug>/config.yaml and fill in.
+# One project = one target_repo + one pinned framework_docs source.
+# This file is write-denied to the agent (config/permissions.py) --
+# it cannot widen its own doc sources or fallback allowlist.
+
+project_name: "REPLACE_ME"          # matches the projects/<slug>/ directory name
+framework_name: "REPLACE_ME"        # e.g. "Django" -- used in prompts and freshness checks
+
+target_repo:
+  source: local        # local | git
+  git_url: null        # required if source: git
+  ref: null            # branch/tag/commit, if source: git
+
+framework_docs:
+  # Pre-fetch the framework's own docs so agents work from a local,
+  # pinned, byte-stable copy instead of live web search/scrape.
+  source: git           # local | git
+  git_url: null         # e.g. https://github.com/django/django.git
+  ref: null             # PIN THIS -- e.g. "stable/5.1.x". Used by
+                         # freshness_check.py to compare against
+                         # target_repo's actual pinned framework version.
+  subpath: null          # e.g. "docs/" if docs live inside a larger repo
+                          # (true for Django -- its docs are in the main
+                          # repo, not a separate one)
+
+fallback:
+  # Used ONLY when a concept genuinely can't be found in framework_docs/.
+  # Set enabled: false to fully disable outbound network access for
+  # this project -- doc-grounder then only ever reads framework_docs/.
+  enabled: true
+  allowed_domains: []   # e.g. ["docs.djangoproject.com"]
+
+external_reference_policy: flag
+# flag   -> any link/reference found INSIDE framework_docs/ pointing
+#           outside it (whether to an allowlisted domain or not) gets
+#           recorded to workspace/notes/external_references.md for you
+#           to review. Nothing is auto-fetched based on this discovery
+#           alone -- a reference found in trusted docs is not the same
+#           trust tier as a domain you explicitly allowlisted.
+# ignore -> do not scan for outbound references (not recommended; you
+#           lose visibility into what the docs point outside themselves)
