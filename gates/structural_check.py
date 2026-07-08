@@ -29,8 +29,8 @@ def check(mapping_entry: dict, project_dir: Path) -> dict:
     if not ref:
         return {"passed": False, "reason": "No repo_reference provided to check."}
 
-    match = re.match(r"^(.*?)(?::(\d+))?$", ref)
-    file_part, line_part = match.group(1), match.group(2)
+    match = re.match(r"^(.*?)(?::(\d+)(?:-(\d+))?)?$", ref)
+    file_part, line_start, line_end = match.group(1), match.group(2), match.group(3)
 
     file_path = project_dir / "target_repo" / file_part
     if not file_path.exists():
@@ -39,19 +39,37 @@ def check(mapping_entry: dict, project_dir: Path) -> dict:
             "reason": f"Referenced file does not exist in target_repo/: {file_part}",
         }
 
-    if line_part:
-        line_num = int(line_part)
+    if line_start:
+        line_start_num = int(line_start)
         try:
             lines = file_path.read_text(errors="replace").splitlines()
         except Exception as e:
             return {"passed": False, "reason": f"Could not read {file_part}: {e}"}
-        if line_num < 1 or line_num > len(lines):
+        if line_start_num < 1 or line_start_num > len(lines):
             return {
                 "passed": False,
                 "reason": (
-                    f"Referenced line {line_num} out of range for "
+                    f"Referenced line {line_start_num} out of range for "
                     f"{file_part} ({len(lines)} lines)."
                 ),
             }
+        if line_end:
+            line_end_num = int(line_end)
+            if line_end_num < 1 or line_end_num > len(lines):
+                return {
+                    "passed": False,
+                    "reason": (
+                        f"Referenced line {line_end_num} out of range for "
+                        f"{file_part} ({len(lines)} lines)."
+                    ),
+                }
+            if line_end_num < line_start_num:
+                return {
+                    "passed": False,
+                    "reason": (
+                        f"Referenced line range {line_start_num}-{line_end_num} "
+                        f"is invalid for {file_part} (end before start)."
+                    ),
+                }
 
     return {"passed": True, "reason": "Reference exists in target_repo/."}

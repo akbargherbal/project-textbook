@@ -105,8 +105,11 @@ def scan_and_log(project_dir: Path):
 
     all_findings = []
     for path in docs_dir.rglob("*"):
-        if path.is_file() and path.suffix in (".md", ".rst", ".txt"):
+        if path.is_file() and path.suffix in (".md", ".rst", ".txt", ".mdx"):
             all_findings.extend(scan_file(path, project_config))
+
+    # Ensure parent directory (projects/<slug>/workspace/notes/) exists before writing the file
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(log_path, "w") as f:
         f.write("# External references found in framework_docs/\n\n")

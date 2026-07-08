@@ -1,0 +1,20 @@
+project_name: "deep-agents"
+framework_name: "deepagents"
+
+target_repo:
+  source: local
+  git_url: null
+  ref: null
+
+framework_docs:
+  source: local
+  git_url: null
+  ref: "v0.1.0"
+  subpath: null
+
+fallback:
+  enabled: true
+  allowed_domains:
+    - docs.langchain.com
+
+external_reference_policy: flag

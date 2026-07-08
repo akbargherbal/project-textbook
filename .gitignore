@@ -6,3 +6,5 @@ projects/*/target_repo/*
 projects/*/framework_docs/*
 !projects/*/target_repo/.gitkeep
 !projects/*/framework_docs/.gitkeep
+framework_docs
+target_repo

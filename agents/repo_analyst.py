@@ -35,7 +35,7 @@ by actually reading files -- never guess or infer contents you have not
 read this call.
 
 Return a structured finding:
-  - file(s)/symbol(s) examined (exact paths, line numbers where relevant)
+  - file(s)/symbol(s) examined (exact paths, line numbers/ranges like line-line where relevant)
   - what the code actually does (grounded in what you read)
   - any framework-looking pattern you notice, named as precisely as you
     can (but do not assert this is "the documented way" to do it --

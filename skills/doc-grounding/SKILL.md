@@ -6,8 +6,8 @@ Loaded by doc-grounder when grounding a concept from repo-analyst's findings.
 
 1. Take the concept/pattern name and the file:line reference from
    repo-analyst's finding.
-2. Search within the allowlisted domains (config/allowed_doc_sources.yaml)
-   -- start with the official API reference/guide, not a blog post, even
+2. Search within the allowlisted domains (fallback.allowed_domains in
+   projects/<slug>/config.yaml) -- start with the official API reference/guide, not a blog post, even
    if the blog post is on an allowed domain and ranks better.
 3. Fetch the specific page, not just the search result snippet -- the
    citation gate checks against what was actually fetched, and a

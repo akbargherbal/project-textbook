@@ -29,55 +29,56 @@ write_file/edit_file/glob/grep). They do NOT govern network tools
 enforced separately, at tool-construction time, gated additionally by
 each project's own fallback.enabled flag (see agents/scoped_tools.py).
 """
+from deepagents import FilesystemPermission
 
 PERMISSIONS = [
     # 1. Hard-deny writes/edits/execute on gates/ and scripts/ -- the
     #    validation logic and the fetch mechanism must sit outside agent
     #    write access entirely.
-    {
-        "paths": ["gates/**", "scripts/**"],
-        "operations": ["write", "edit", "execute"],
-        "mode": "deny",
-    },
+    FilesystemPermission(
+        paths=["/gates/**", "/scripts/**"],
+        operations=["write"],
+        mode="deny",
+    ),
     # 2. Hard-deny writes/edits/execute on every project's source-of-truth:
     #    its config, its target repo, and its pre-fetched docs.
-    {
-        "paths": [
-            "projects/*/config.yaml",
-            "projects/*/target_repo/**",
-            "projects/*/framework_docs/**",
+    FilesystemPermission(
+        paths=[
+            "/projects/*/config.yaml",
+            "/projects/*/target_repo/**",
+            "/projects/*/framework_docs/**",
         ],
-        "operations": ["write", "edit", "execute"],
-        "mode": "deny",
-    },
+        operations=["write"],
+        mode="deny",
+    ),
     # 3. Those same paths are readable/greppable -- that's the point.
-    {
-        "paths": [
-            "projects/*/config.yaml",
-            "projects/*/target_repo/**",
-            "projects/*/framework_docs/**",
+    FilesystemPermission(
+        paths=[
+            "/projects/*/config.yaml",
+            "/projects/*/target_repo/**",
+            "/projects/*/framework_docs/**",
         ],
-        "operations": ["read", "glob", "grep"],
-        "mode": "allow",
-    },
+        operations=["read"],
+        mode="allow",
+    ),
     # 4. Each project's own workspace is fully read/write.
-    {
-        "paths": ["projects/*/workspace/**"],
-        "operations": ["read", "write", "edit", "glob", "grep"],
-        "mode": "allow",
-    },
+    FilesystemPermission(
+        paths=["/projects/*/workspace/**"],
+        operations=["read", "write"],
+        mode="allow",
+    ),
     # 5. Catch-all: deny write/edit/execute everywhere else not already
     #    matched above. Closes the "unmatched = allowed" default rather
     #    than relying on convention.
-    {
-        "paths": ["**"],
-        "operations": ["write", "edit", "execute"],
-        "mode": "deny",
-    },
+    FilesystemPermission(
+        paths=["/**"],
+        operations=["write"],
+        mode="deny",
+    ),
     # 6. Reads remain open elsewhere (skills/, AGENTS.md, config templates).
-    {
-        "paths": ["**"],
-        "operations": ["read", "glob", "grep"],
-        "mode": "allow",
-    },
+    FilesystemPermission(
+        paths=["/**"],
+        operations=["read"],
+        mode="allow",
+    ),
 ]
