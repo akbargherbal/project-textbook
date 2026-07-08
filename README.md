@@ -41,6 +41,16 @@ python main.py --project my-project
 
 A concrete example is already scaffolded at `projects/django-example/` — its `config.yaml` points `framework_docs` at `django/django.git`'s `docs/` subpath, pinned to `stable/5.1.x`. Fetch it, drop a Django project you want to learn into its `target_repo/`, and run.
 
+## Checkpointing & approvals
+
+Every run is checkpointed to a file-backed `checkpoints.db` at the project root (see `runtime/checkpointing.py`). Each mapping-entry write now pauses for a human `approve`/`edit`/`reject` decision before it's persisted, and an interrupted or crashed session can be picked back up with:
+
+```bash
+python main.py --project my-project --resume
+```
+
+Full details, including SQL queries for inspecting `checkpoints.db` directly, are in `docs/CHECKPOINTING.md`.
+
 ## Output
 
 - `projects/<slug>/workspace/mappings/` — code-to-doc mappings that passed all three gates.

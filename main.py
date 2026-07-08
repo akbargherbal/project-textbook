@@ -29,6 +29,7 @@ import yaml
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 import deepagents.backends.filesystem as db_filesystem
+from langgraph.types import Command
 
 # ----------------- Windows Path Compatibility Monkeypatch -----------------
 # On Windows + Python 3.12+, .resolve() on nested paths can return extended
@@ -85,6 +86,7 @@ from agents.orchestrator import build_orchestrator_prompt
 from agents.scoped_tools import build_scoped_web_tools
 from agents.tool_call_logger import ToolCallLogger, build_transcript
 from gates.external_reference_scan import scan_and_log
+from runtime.checkpointing import get_checkpointer, resolve_thread_id
 
 # Import our verification gates
 import gates.structural_check as structural_check
@@ -137,9 +139,13 @@ def parse_markdown_mapping(content: str) -> dict:
         )
     raw_source = doc_source_match.group(1).strip() if doc_source_match else ""
 
-    # Normalize: convert backslashes to forward slashes and strip leading/trailing slashes
+    # Normalize: a doubled-backslash run (4 literal backslash characters --
+    # produced by some Windows-path serializations that escape "\\" as
+    # "\\\\") collapses to a single forward slash. A lone single backslash
+    # pair (2 literal backslash characters) is left untouched. Then strip
+    # leading/trailing slashes.
     if raw_source:
-        raw_source = raw_source.replace("\\\\", "/").strip().lstrip("/")
+        raw_source = raw_source.replace("\\\\\\\\", "/").strip().lstrip("/")
     entry["doc_source"] = raw_source
 
     # Extract Doc source tier
@@ -190,7 +196,60 @@ def parse_mappings_from_text(text: str) -> list[dict]:
     return entries
 
 
-def run(project_slug: str, task_description: str):
+def _prompt_for_decisions(action_requests: list[dict], review_configs: list[dict]) -> list[dict]:
+    """
+    Interactively collect one human decision per pending action_request, in
+    the exact order LangGraph expects them back (see Command(resume=...)
+    below). This is the "paused human-in-the-loop approval state" becoming
+    a real prompt: the graph is genuinely suspended -- and checkpointed --
+    while we wait on input() here, however long that takes.
+    """
+    config_by_tool = {cfg["action_name"]: cfg for cfg in review_configs}
+    decisions = []
+    print("\n--- Human approval required (see checkpoints.db for full history) ---")
+    for action in action_requests:
+        allowed = config_by_tool.get(action["name"], {}).get(
+            "allowed_decisions", ["approve", "reject"]
+        )
+        print(f"\nTool: {action['name']}")
+        print(f"Args: {action['args']}")
+        choice = ""
+        while choice not in allowed:
+            choice = input(f"Decision [{'/'.join(allowed)}]: ").strip().lower()
+        decisions.append({"type": choice})
+    return decisions
+
+
+def _run_until_settled(agent, config: dict, initial_input=None):
+    """
+    Invoke (or resume) the agent and keep resuming through every paused
+    human-in-the-loop interrupt until the graph actually finishes.
+
+    `initial_input` is either the first user message (new session) or None
+    (resuming a thread that was left mid-run -- e.g. the process was killed
+    -- with no interrupt of its own to answer; LangGraph continues from the
+    thread's last checkpoint in that case).
+    """
+    result = agent.invoke(initial_input, config=config, version="v2")
+
+    while result.interrupts:
+        interrupt_value = result.interrupts[0].value
+        decisions = _prompt_for_decisions(
+            interrupt_value["action_requests"], interrupt_value["review_configs"]
+        )
+        result = agent.invoke(
+            Command(resume={"decisions": decisions}), config=config, version="v2"
+        )
+
+    return result.value
+
+
+def run(
+    project_slug: str,
+    task_description: str,
+    thread_id: str | None = None,
+    resume: bool = False,
+):
     project_dir = PROJECTS_DIR / project_slug
     project_config = load_project(project_slug)
     framework_name = project_config.get("framework_name", project_slug)
@@ -237,6 +296,17 @@ def run(project_slug: str, task_description: str):
     # Instantiate FilesystemBackend so virtual filesystem tools map to real disks
     real_filesystem_backend = FilesystemBackend(root_dir=".", virtual_mode=True)
 
+    # --- Persistent checkpointing (checkpoints.db at the project root) ---
+    # Required for: (a) recording full execution history and subagent (task
+    # tool) decisions as they happen, (b) pausing on a human-in-the-loop
+    # approval below, and (c) resuming this exact thread later via
+    # --resume / --thread-id, whether that "later" is a fresh CLI process
+    # or a retry after a crash. See runtime/checkpointing.py.
+    checkpointer = get_checkpointer()
+    resolved_thread_id, is_resuming = resolve_thread_id(
+        project_dir, project_slug, thread_id, resume
+    )
+
     agent = create_deep_agent(
         model=model,
         tools=[],
@@ -244,14 +314,80 @@ def run(project_slug: str, task_description: str):
         permissions=PERMISSIONS,
         subagents=[repo_analyst_with_tools, doc_grounder_with_tools],
         backend=real_filesystem_backend,
-        # interrupt_on intentionally omitted -- see LIMITATIONS.md
+        checkpointer=checkpointer,
+        # Pause for human approval before every write_file call -- this is
+        # the point at which the orchestrator commits a mapping entry to
+        # workspace/mappings/ (step 5 of agents/orchestrator.py's plan).
+        # "edit" lets a reviewer fix up content inline instead of only
+        # approve/reject; the entry still passes back through the gates in
+        # this file afterward regardless of the decision made here.
+        # interrupt_on was previously omitted -- see LIMITATIONS.md; this
+        # is that gap being filled in.
+        interrupt_on={
+            "write_file": {"allowed_decisions": ["approve", "edit", "reject"]},
+        },
     )
 
     print(f"Project: {project_slug} ({framework_name})")
     print(
         f"Fallback web access: {'enabled' if fallback_enabled else 'DISABLED -- local docs only'}"
     )
-    print(f"Task: {task_description}\n")
+    print(f"Thread: {resolved_thread_id}{' (resuming)' if is_resuming else ' (new session)'}")
+
+    # config is keyed by thread_id -- this is what ties this invocation to
+    # a specific row of checkpoint history in checkpoints.db, and what a
+    # later `--resume --thread-id {resolved_thread_id}` looks up.
+    tool_logger = ToolCallLogger()
+    run_config = {
+        "callbacks": [tool_logger],
+        "configurable": {"thread_id": resolved_thread_id},
+    }
+
+    if is_resuming:
+        print("Resuming paused/interrupted session -- no new task given.\n")
+        # No new user message: continue from wherever this thread's last
+        # checkpoint left off. If it was paused on a HITL interrupt,
+        # the state.tasks lookup below surfaces that immediately; if the
+        # process was merely killed mid-run with no interrupt pending,
+        # LangGraph resumes execution on its own from the last completed
+        # checkpoint.
+        pending_state = agent.get_state(run_config)
+        if pending_state.tasks and any(
+            getattr(t, "interrupts", None) for t in pending_state.tasks
+        ):
+            interrupt_value = pending_state.tasks[0].interrupts[0].value
+            decisions = _prompt_for_decisions(
+                interrupt_value["action_requests"], interrupt_value["review_configs"]
+            )
+            values = _run_until_settled(
+                agent,
+                run_config,
+                initial_input=Command(resume={"decisions": decisions}),
+            )
+        elif pending_state.next:
+            values = _run_until_settled(agent, run_config, initial_input=None)
+        else:
+            print(
+                "No paused work found for this thread -- it already ran to "
+                "completion. Starting a new task on the same thread instead.\n"
+            )
+            print(f"Task: {task_description}\n")
+            values = _run_until_settled(
+                agent,
+                run_config,
+                initial_input={
+                    "messages": [{"role": "user", "content": task_description}]
+                },
+            )
+    else:
+        print(f"Task: {task_description}\n")
+        values = _run_until_settled(
+            agent,
+            run_config,
+            initial_input={
+                "messages": [{"role": "user", "content": task_description}]
+            },
+        )
 
     # NOTE: transcript is built from a callback logger (below), not from
     # result["messages"]. Subagents (doc-grounder, repo-analyst) run as
@@ -262,13 +398,7 @@ def run(project_slug: str, task_description: str):
     # subagent genuinely read the file. Callbacks propagate through the full
     # run tree (including subagent sub-invocations), so they're the correct
     # source of truth here -- see agents/tool_call_logger.py.
-    tool_logger = ToolCallLogger()
-    result = agent.invoke(
-        {
-            "messages": [{"role": "user", "content": task_description}],
-        },
-        config={"callbacks": [tool_logger]},
-    )
+    result = values
 
     print("\n--- Gate results ---")
 
@@ -473,8 +603,26 @@ def main():
             "mapping for the concepts it uses. Follow AGENTS.md house style."
         ),
     )
+    parser.add_argument(
+        "--thread-id",
+        default=None,
+        help=(
+            "Thread ID for this session's checkpoint history in "
+            "checkpoints.db. Omit to auto-generate a new one (recorded as "
+            "this project's 'last thread' for a future --resume)."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume a previously paused/interrupted session instead of "
+            "starting a new task. Uses --thread-id if given, otherwise the "
+            "last thread_id recorded for --project."
+        ),
+    )
     args = parser.parse_args()
-    run(args.project, args.task)
+    run(args.project, args.task, thread_id=args.thread_id, resume=args.resume)
 
 
 if __name__ == "__main__":

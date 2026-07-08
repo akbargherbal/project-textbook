@@ -3,6 +3,9 @@ deepagents>=0.5.2
 langchain>=0.3.0
 langgraph>=0.2.0
 
+# Persistent checkpointing (see runtime/checkpointing.py, main.py --resume)
+langgraph-checkpoint-sqlite>=2.0.0
+
 # Model providers (install only what you use; kept together for the PoC)
 langchain-deepseek
 langchain-anthropic
