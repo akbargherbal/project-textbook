@@ -40,9 +40,48 @@ with MODEL_TIMEOUT_SECONDS, or per-call with get_model(timeout=...).
 
 import os
 
+import requests
 from langchain.chat_models import init_chat_model
 
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MODEL_TIMEOUT_SECONDS", "300"))
+
+# Transient network failures that are worth retrying automatically rather
+# than crashing the whole run: a client-side read timeout, a dropped
+# connection, or an HTTP error (this also catches provider-side gateway
+# timeouts like NVIDIA's 504 -- see model_provider.py history). This
+# intentionally also matches non-retryable HTTPErrors like a 401/403; a
+# wasted retry or two on those is harmless (they'll fail again identically
+# and surface the same error), and it keeps this list simple rather than
+# needing to parse status codes out of every provider's exception shape.
+_RETRYABLE_EXCEPTIONS = (
+    requests.exceptions.Timeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.HTTPError,
+)
+
+
+def _with_retry(llm):
+    """
+    Wrap a chat model with LangChain's built-in Runnable.with_retry() so a
+    single transient network blip doesn't kill an entire agent run.
+
+    WHY THIS EXISTS: two of the three crashes hit while building this
+    integration were exactly this class of problem -- a client read
+    timeout and, separately, NVIDIA's gateway returning a 504 mid-
+    generation. Neither was a logic error; both were "ask again and it'll
+    probably work." Retrying at the model layer (rather than, say, only
+    in the CLI's checkpoint/resume loop) means a transient blip costs a
+    few seconds and a log line instead of an entire aborted run + manual
+    `--resume`.
+
+    3 attempts, exponential backoff with jitter -- .with_retry()'s
+    defaults are reasonable here and deliberately not hand-tuned further.
+    """
+    return llm.with_retry(
+        retry_if_exception_type=_RETRYABLE_EXCEPTIONS,
+        wait_exponential_jitter=True,
+        stop_after_attempt=3,
+    )
 
 # provider_key -> (init_chat_model model string, required env var for the key)
 MODEL_MAP = {
@@ -106,6 +145,44 @@ def get_model(provider: str | None = None, **overrides):
             **nvidia_defaults,
         )
 
+        # ---------------- 504/empty-body error masking monkeypatch ----------------
+        # From the traceback hit during this integration: ChatNVIDIA's
+        # internal client._try_raise(response) unconditionally calls
+        # response.json() to build its error message. A gateway-level
+        # failure (e.g. NVIDIA's 504 with an empty body) has no JSON body
+        # to parse, so the REAL error ("504 Server Error: Gateway Timeout")
+        # gets masked by a confusing `JSONDecodeError: Expecting value`
+        # instead. Patched here to fall back to the real HTTPError when
+        # the body isn't JSON.
+        #
+        # NOTE: patched against `type(llm._client)` (the real runtime
+        # class) rather than a hardcoded `langchain_nvidia_ai_endpoints.
+        # _common.SomeClassName` -- I only have the traceback showing this
+        # method lives in _common.py as `_try_raise`, not that module's
+        # actual source, so I'm deliberately not guessing an exact class
+        # name that could silently no-op or AttributeError if wrong.
+        # Re-verify this still applies if langchain-nvidia-ai-endpoints is
+        # upgraded (same spirit as this file's other NOTE above).
+        _client_cls = type(llm._client)
+        if hasattr(_client_cls, "_try_raise") and not getattr(
+            _client_cls, "_patched_for_readable_errors", False
+        ):
+            _orig_try_raise = _client_cls._try_raise
+
+            def _patched_try_raise(self, response, *args, **kwargs):
+                try:
+                    response.raise_for_status()
+                except requests.exceptions.HTTPError as http_err:
+                    try:
+                        response.json()
+                    except (ValueError, requests.exceptions.JSONDecodeError):
+                        raise http_err from None
+                return _orig_try_raise(self, response, *args, **kwargs)
+
+            _client_cls._try_raise = _patched_try_raise
+            _client_cls._patched_for_readable_errors = True
+        # ---------------------------------------------------------------------------
+
         # ChatNVIDIA's public constructor has no `timeout=` kwarg -- anything
         # passed in gets silently absorbed into model_kwargs (and sent as a
         # bogus request field) instead of configuring the HTTP client. The
@@ -118,11 +195,11 @@ def get_model(provider: str | None = None, **overrides):
         llm._client.timeout = timeout_seconds
         llm._async_client.timeout = timeout_seconds
 
-        return llm
+        return _with_retry(llm)
 
     # For every other provider, init_chat_model's `timeout` kwarg is passed
     # straight through to the underlying SDK client (OpenAI/Anthropic/
     # DeepSeek all honor it directly, unlike ChatNVIDIA above). Apply the
     # same 5-minute default here so no provider is left on a 60s default.
     overrides.setdefault("timeout", DEFAULT_TIMEOUT_SECONDS)
-    return init_chat_model(model_string, **overrides)
+    return _with_retry(init_chat_model(model_string, **overrides))

@@ -84,7 +84,7 @@ from agents.repo_analyst import REPO_ANALYST
 from agents.doc_grounder import DOC_GROUNDER
 from agents.orchestrator import build_orchestrator_prompt
 from agents.scoped_tools import build_scoped_web_tools
-from agents.tool_call_logger import ToolCallLogger, build_transcript
+from agents.tool_call_logger import ToolCallLogger, build_transcript, save_calls
 from gates.external_reference_scan import scan_and_log
 from runtime.checkpointing import get_checkpointer, resolve_thread_id
 
@@ -401,6 +401,25 @@ def run(
     result = values
 
     print("\n--- Gate results ---")
+
+    # 0. Persist the raw tool-call transcript BEFORE anything else touches
+    # it. citation_validator needs this to check a claimed citation was
+    # genuinely retrieved -- but tool_logger only lives in memory for this
+    # process. If gate-checking below throws, or a citation gets flagged
+    # and needs re-review later, this file is what makes it possible to
+    # re-run structural_check/citation_validator/freshness_check standalone
+    # afterward with no model/API calls at all, instead of needing to
+    # re-run the whole agent just to regenerate evidence that already
+    # existed. One file per thread so multiple runs on the same project
+    # don't clobber each other's evidence.
+    notes_dir = project_dir / "workspace" / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    transcript_path = notes_dir / f"transcript_{resolved_thread_id}.jsonl"
+    try:
+        save_calls(tool_logger, transcript_path)
+        print(f"Saved tool-call transcript to {transcript_path}")
+    except Exception as e:
+        print(f"WARNING: could not persist transcript to {transcript_path}: {e}")
 
     # 1. Build SessionTranscript from the callback-captured tool-call log
     transcript = build_transcript(tool_logger, project_slug, citation_validator)

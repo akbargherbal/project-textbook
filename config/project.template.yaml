@@ -12,6 +12,15 @@ target_repo:
   source: local        # local | git
   git_url: null        # required if source: git
   ref: null            # branch/tag/commit, if source: git
+  subpath: null        # e.g. "my_project/" if the repo's actual project
+                        # files live inside a subfolder rather than at the
+                        # repo root (common for repos structured as
+                        # monorepo-of-one or with a wrapper directory
+                        # matching the repo name). scripts/fetch_sources.py
+                        # will warn (and refuse without --force) if a clone
+                        # lands a single subdirectory and nothing else at
+                        # target_repo/'s root -- that's almost always a
+                        # sign this should have been set.
 
 framework_docs:
   # Pre-fetch the framework's own docs so agents work from a local,
