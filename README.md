@@ -59,7 +59,7 @@ Full details, including SQL queries for inspecting `checkpoints.db` directly, ar
 
 ## Adding a new framework/repo to learn
 
-1. `cp config/project.template.yaml projects/<new-slug>/config.yaml`, fill in `framework_name`, `framework_docs.git_url` + `ref` (+ `subpath` if docs live inside a larger repo), and `fallback.allowed_domains` if you want a fallback at all.
+1. `cp config/project.template.yaml projects/<new-slug>/config.yaml`, fill in `framework_name`, `framework_docs.git_url` + `ref` (+ `subpath` if docs live inside a larger repo), and `fallback.allowed_domains` if you want a fallback at all. `target_repo` supports the same `subpath` key if the repo's real content is nested inside a subfolder rather than at its root.
 2. `python scripts/fetch_sources.py --project <new-slug>`
 3. Drop the repo you want to learn into `projects/<new-slug>/target_repo/` (or set `target_repo.source: git`).
 4. `python main.py --project <new-slug>`
